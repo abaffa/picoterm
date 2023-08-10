@@ -17,12 +17,48 @@ From version 1.2 any publication will includes all U2F firmware files for 40 & 8
 
 A thirds number in publication (eg: 1.1.1, 1.1.x) refers to an intermediate development version until it is finally published as a major version (say 1.2).
 
-## Version 1.5.3 - (ongoing)
+## Version 1.6.0.30 - (ongoing)
+
+__New GPIO attribution for expansion connector__ for PicoTerm applying to "Pico Vga Terminal" and "RP2040 VGA Terminal".
+
+### Features
+* Documentation review (see [GPIO usage on expansion connector](docs/picoterm-conn.md)).
+* add `picoterm_harddef.h` to store hardware definition
+	* SD Card initial support with pio_fatfs (version of FatFS over PIO SPI). Using GPIO 26,27,28,5. Voir main.c, spi_sd_init() et spi_sd_init().
+	* I2C bus moved to GPIO 18 & 19
+	* PoorMan Debugger moved to GPIO 22 @ 115200 bds
+* __initial support of [fatfs](http://elm-chan.org/fsw/ff/00index_e.html) over PIO SPI__.<br />Read more about this from [pio_fatfs/readme.txt](pio_fatfs/readme.txt) file and [pure SPI pico_fatfs_test](https://github.com/elehobica/pico_fatfs_test) repository.
+* __initial support of CLI__: Command Line Interpreter activated with SHIFT+CTRL+C with [several commands](docs/cli.md).<br />The CLI is used to test SDCard interaction and future configurable features.<br />The CLI is extended via the `cli/user_funcs.c` file.
+	* sd_info
+	* dir
+	* type
+	* send_file
+* Adding [keyboard hotkey](docs/hotkey.md) (1.6.0.31)
+
+
+### Fix & Improvement
+* set_env.sh to quicly setup the environment. Call it with `source set_env.sh` .
+* rename conio slip_character() to put_char() - more conform with putc()
+* set PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64 when compiling as suggested by Spencer Owner.<br />On some boards/samples, the xosc can take longer to stabilize than is usual ([see this adafruit_itsybitsy_rp2040.h](https://github.com/raspberrypi/pico-sdk/blob/master/src/boards/include/boards/adafruit_itsybitsy_rp2040.h))
+
+
+
+## Version 1.5.3 - Apr 23 2023
+Notice: 40col-color upgraded _at the best_ to 80col features. Read specific remarks.md in the target build folder.
 
 ### Features
 * Adding License file (BSD 3-Clause).
+* Key Repeat implemented into keybd.c (see keydown_start_repeat_delay, keydown_resent_delay for parametrisation).
+* save screen+cursor when activating menu screen. Restore them when existing menu screen.
+* Buzzer & USB-Power pins: auto-detect PCA9536 I2C GPIO expander at startup (otherwise use GPIOs). See [picoterm-conn](docs/picoterm-conn.md) for details.
+* pictoterm_screen now diplays at best under NupetScii and cp437 fonts.
+* Multi-FontFace support : adding OlivettiThin font added
+ * Support up to 16 Font-Face
+ * Support up to 16 Charset
+ * Know issue: CP437 & NupetScii data should also be designed in 14 pixels height for compiling OlivettiThin (also 14 pixels Height)
 
 ### Fix & Improvement
+* font cp437 fix char 0xC4 (horizontal line)
 * DEC Lines in ASCII: using = instead of - offers a better visibility.
 * CMakeList copy the required files from PICO_SDK and font-suite (issue #25).
 * Decoupling picoterm.c
@@ -33,11 +69,17 @@ A thirds number in publication (eg: 1.1.1, 1.1.x) refers to an intermediate deve
 * picoterm_conio.c
  * conio_config -> group all the console parameters that before was individual parameters
  * conio_config.cursor -> contains pos.x, pos.y, state (for visibility,blink state,...), symbol (for cursor symbol)
+ * cursor save & restore
 * Decoupling picoterm_screen.c
  * Store the PICOTERM_LOGO into picoterm_logo.c
  * allow replacement for custom project (Please keeps the PicoTerm credit)
  * passed full test-suite
- 
+* CMakeList.txt: Using $ENV{PICO_SDK_PATH} to detect environment variable and initialise ${PICO_SDK_PATH}
+* Document how to add new charset.
+* Document how to add new font-face.
+* Avoids multiples allocation in `build_font()` causing memory fragmentation.
+* font-suite/nupetscii.c & cp437.c are renamed mono8_cp437.c & mono8_nupetscii.c for better consistancy. Picoterm CMakeList and code are updated accordingly!
+
 ## Version 1.5.2 - Dec 30 2022
 
 This is a temporary release for testing the new features.

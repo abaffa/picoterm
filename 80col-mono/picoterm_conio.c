@@ -1,12 +1,18 @@
 /* ==========================================================================
-        Manage the console interaction for the PicoTerm software
-              * printing string
-              * reading key from keyboard, etc
+    Manage the basic console interaction for the PicoTerm software
+          * put_char on the screen
+					* read_key from keyboard
+          * managing everything regarding the Console display (moving
+					  cursor, inverting content, etc)
+
+		Advanced interaction with the console (printing string, request input
+	  is provided by common/picoterm_stdlio.c)
    ========================================================================== */
 
 #include <stdbool.h>
 #include <string.h>
 #include "picoterm_conio.h"
+#include "../common/picoterm_conio_config.h"
 #include "../common/picoterm_cursor.h"
 #include "../common/picoterm_dec.h"
 #include "../common/picoterm_stddef.h"
@@ -14,23 +20,27 @@
 #include "picoterm_core.h"
 #include "../common/picoterm_config.h"
 #include <stdlib.h>
+#include "bsp/board.h" // board_millis()
 
+/* picoterm_cursor.c */
+extern bool is_blinking;
 
 /* picoterm_config.c */
 extern picoterm_config_t config; // required to read config.font_id
 
-picoterm_conio_config_t conio_config  = { .rvs = false, .blk = false, .just_wrapped = false,
-    .wrap_text = true, .dec_mode = DEC_MODE_NONE, .cursor.pos.x = 0, .cursor.pos.y = 0,
-    .cursor.state.visible = true, .cursor.state.blink_state = false,
-    .cursor.state.blinking_mode = true, .cursor.symbol = 143 };
+/* picoterm_conio_config.c */
+extern picoterm_conio_config_t conio_config;
 
 array_of_row_text_pointer ptr;           // primary screen content
 array_of_row_text_pointer secondary_ptr; // secondary screen content
 
 // Private members
-unsigned char __chr_under_csr;
+unsigned char __chr_under_csr; // Character under the cursor
 bool __inv_under_csr;
 bool __blk_under_csr;
+
+// saved cursor
+struct point __saved_csr = {0,0};
 
 void conio_init( uint8_t ansi_font_id ){
   // Initialize the ConIO ressources
@@ -52,11 +62,12 @@ void conio_init( uint8_t ansi_font_id ){
 
 void conio_reset( char default_cursor_symbol ){
   // Reset the terminal
-  conio_config.rvs = false;
+  /*conio_config.rvs = false;
   conio_config.blk = false;
   conio_config.wrap_text = true;
   conio_config.just_wrapped = false;
-  conio_config.dec_mode = DEC_MODE_NONE; // single/double lines
+  conio_config.dec_mode = DEC_MODE_NONE; // single/double lines */
+	conio_config_init();
   // initialized @ init()
   // conio_config.ansi_font_id = FONT_NUPETSCII; // selected font_id for graphical operation
 
@@ -64,9 +75,9 @@ void conio_reset( char default_cursor_symbol ){
   __inv_under_csr = 0;
   __blk_under_csr = 0;
 
-  conio_config.cursor.state.visible = true;
+  /* conio_config.cursor.state.visible = true;
   conio_config.cursor.state.blink_state = false; // blinking cursor is in hidden state
-  conio_config.cursor.state.blinking_mode = true;
+  conio_config.cursor.state.blinking_mode = true; */
   conio_config.cursor.symbol = default_cursor_symbol;
 
   clrscr();
@@ -74,59 +85,182 @@ void conio_reset( char default_cursor_symbol ){
 }
 
 
-void __print_string(char str[], bool strip_graphical ){
-   // remove the graphical/NuPetScii extended charset from a string and replace them with
-  // more convenient.
+//void __print_string(char str[], bool strip_graphical ){
+void print_nupet(char str[], uint8_t font_id ){
+  // Print a NupetSCII encoded string to terminal with current font_id selected.
+  // translate the string characters to the target font_id  at the best.
+  //
   // This function is used by the configuration screen. See display_config().
   char c;
   for(int i=0;i<strlen(str);i++){
       c = str[i];
-      if( strip_graphical )
-        switch (c) {
-          case '\x0A6':
-              c = ' ';
-              break;
-          case '\x0C2':
-          case '\x0E0':
-              c = '|';
-              break;
-          case '\x0C3':
-          case '\x0E1':
-              c = '-';
-              break;
-          case '\x083':
-              c = '*'; // replace a bullet
-              break;
-          case '\x0B0':
-          case '\x0AD':
-          case '\x0BD':
-          case '\x0AE':
-          case '\x0AB':
-          case '\x0B3':
-          case '\x0E8':
-          case '\x0E9':
-          case '\x0B2':
-          case '\x08A':
-          case '\x0E7':
-          case '\x0E5':
-          case '\x0E2':
-          case '\x0E4':
-          case '\x0DB':
-          case '\x0B1':
-              c = '+';
-              break;
-          case '\x0D1':
-              c = '>'; // Replace a "selected item" marker
-              break;
-          default:
-              break;
-        }
+			if( has_charset(font_id,CHARSET_CP437) ){
+					switch (c) {
+						case '\x0AA':
+								c = '\x0B3';
+								break;
+						case '\x0AB':
+								c = '\x0C3';
+								break;
+						case '\x0AD':
+								c = '\x0C0';
+								break;
+						case '\x0AE':
+								c = '\x0BF';
+								break;
+						case '\x0AF':
+								c = '\x0C4';
+								break;
+						case '\x0B0':
+								c = '\x0DA';
+								break;
+						case '\x0B1':
+								c = '\x0C1';
+								break;
+						case '\x0B2':
+								c = '\x0C2';
+								break;
+						case '\x0B3':
+								c = '\x0B4';
+								break;
+						case '\x0B4':
+								c = '\x0B3';
+								break;
+						case '\x0BA':
+								c = '\x0D9';
+								break;
+						case '\x0BD':
+								c = '\x0D9';
+								break;
+						case '\x0C2':
+								c = '\x0B3';
+								break;
+						case '\x0C3':
+								c = '\x0C4';
+								break;
+						case '\x0C9':
+								c = '\x0BF';
+								break;
+						case '\x0CA':
+								c = '\x0CA';
+								break;
+						case '\x0CB':
+								c = '\x0D9';
+								break;
+						case '\x0CC':
+								c = '\x0C0';
+								break;
+						case '\x0CF':
+								c = '\x0DA';
+								break;
+						case '\x0D0':
+								c = '\x0BF';
+								break;
+						case '\x0D5':
+								c = '\x0DA';
+								break;
+						case '\x0D7':
+								c = '\x0AF';
+								break;
+						case '\x0DB':
+								c = '\x0C5';
+								break;
+						case '\x0E0':
+								c = '\x0BA';
+								break;
+						case '\x0E1':
+								c = '\x0CD';
+								break;
+						case '\x0E2':
+								c = '\x0C9';
+								break;
+						case '\x0E3':
+								c = '\x0CB';
+								break;
+						case '\x0E4':
+								c = '\x0BB';
+								break;
+						case '\x0E5':
+								c = '\x0C8';
+								break;
+						case '\x0E6':
+								c = '\x0CA';
+								break;
+						case '\x0E7': // --
+								c = '\x0BC';
+								break;
+						case '\x0E8':
+								c = '\x0CC';
+								break;
+						case '\x0E9':
+								c = '\x0B9';
+								break;
+						case '\x0EA':
+								c = '\x0CE';
+								break;
+						case '\x0D1':
+								c = '\x0F9';
+								break;
+						case '\x0A6':
+								c = '\x0B1';
+								break;
+						case '\x083':
+								c = '\x0F9';
+								break;
+						default:
+								if(c>0x7E)
+									c = '?';
+								break;
+					} // FONT_CP437
+
+			}
+			else if( has_charset(font_id, CHARSET_NUPETSCII) ){
+				// c is already right
+			}
+			else if( font_id==FONT_ASCII ){
+					switch (c) {
+						case '\x0A6':
+								c = ' ';
+								break;
+						case '\x0C2':
+						case '\x0E0':
+								c = '|';
+								break;
+						case '\x0C3':
+						case '\x0E1':
+								c = '-';
+								break;
+						case '\x083':
+								c = '*'; // replace a bullet
+								break;
+						case '\x0B0':
+						case '\x0AD':
+						case '\x0BD':
+						case '\x0AE':
+						case '\x0AB':
+						case '\x0B3':
+						case '\x0E8':
+						case '\x0E9':
+						case '\x0B2':
+						case '\x08A':
+						case '\x0E7':
+						case '\x0E5':
+						case '\x0E2':
+						case '\x0E4':
+						case '\x0DB':
+						case '\x0B1':
+								c = '+';
+								break;
+						case '\x0D1':
+								c = '>'; // Replace a "selected item" marker
+								break;
+						default:
+								break;
+					} // ASCII & undefined
+
+			} // test on has_charset( font_id, ... )
       handle_new_character( c );
   }
-}
-
-void print_string(char str[] ){
-  __print_string( str, FONT_ASCII );
 }
 
 char read_key(){
@@ -209,7 +343,7 @@ void clear_screen_from_cursor(){
     clear_line_from_cursor();
     for(int r=conio_config.cursor.pos.y+1;r<ROWS;r++){
         for(int c=0;c<COLUMNS;c++){
-            slip_character(0,c,r);    // todo: should use the new method in clear_entire_screen
+            put_char(0,c,r);    // todo: should use the new method in clear_entire_screen
         }
     }
 }
@@ -218,7 +352,7 @@ void clear_screen_to_cursor(){
     clear_line_to_cursor();
     for(int r=0;r<conio_config.cursor.pos.y;r++){
         for(int c=0;c<COLUMNS;c++){
-            slip_character(0,c,r);  // todo: should use the new method in clear_entire_screen
+            put_char(0,c,r);  // todo: should use the new method in clear_entire_screen
         }
     }
 }
@@ -428,7 +562,7 @@ unsigned char blk_character(int x,int y){
     return ptr[y]->blk[x];
 }
 
-void slip_character(unsigned char ch,int x,int y){
+void put_char(unsigned char ch,int x,int y){
     if(conio_config.cursor.pos.x>=COLUMNS || conio_config.cursor.pos.y>=VISIBLEROWS){
         return;
     }
@@ -590,6 +724,10 @@ void move_cursor_home(){
 
 void cursor_visible(bool v){
     conio_config.cursor.state.visible=v;
+		if( v==true )
+			print_cursor();
+	  else
+			clear_cursor();
 }
 
 bool cursor_blink_state() {
@@ -598,4 +736,39 @@ bool cursor_blink_state() {
 void set_cursor_blink_state( bool state ) {
   // is the Blinking cursor should currently be visible or not visible
   conio_config.cursor.state.blink_state = state;
+}
+
+void save_cursor_position(){
+  __saved_csr.x = conio_config.cursor.pos.x;
+  __saved_csr.y = conio_config.cursor.pos.y;
+}
+
+void restore_cursor_position(){
+  conio_config.cursor.pos.x = __saved_csr.x;
+  conio_config.cursor.pos.y = __saved_csr.y;
+}
+
+void reset_saved_cursor(){
+  __saved_csr.x = conio_config.cursor.pos.x;
+  __saved_csr.y = conio_config.cursor.pos.y;
+}
+
+//--------------------------------------------------------------------+
+//  ConIO Specific Tasks
+//--------------------------------------------------------------------+
+
+void csr_blinking_task() {
+  const uint32_t interval_ms_csr = 525;
+  static uint32_t start_ms_csr = 0;
+
+  // Blink every interval ms
+  if ( board_millis() - start_ms_csr > interval_ms_csr) {
+
+  start_ms_csr += interval_ms_csr;
+
+  is_blinking = !is_blinking;
+  set_cursor_blink_state( 1 - cursor_blink_state() );
+
+  refresh_cursor();
+  }
 }

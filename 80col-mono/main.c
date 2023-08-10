@@ -51,22 +51,37 @@
 #include "main.h"
 #include "picoterm_core.h"
 #include "picoterm_conio.h"
+#include "picoterm_screen.h"
 #include "../common/picoterm_config.h"
 #include "../common/picoterm_debug.h"
 #include "../common/picoterm_cursor.h"
 #include "../common/picoterm_stddef.h"
+#include "../common/picoterm_harddef.h"
 #include "../common/keybd.h"
-#include "picoterm_screen.h"
+#include "../common/picoterm_i2c.h"
+#include "../common/pca9536.h"
+#include "../common/pio_sd.h"
+#include "../cli/cli.h"
 //#include "hardware/structs/bus_ctrl.h"
-
 #include "bsp/board.h"
 #include "tusb.h"
+#include "hardware/i2c.h"
+#include "hardware/uart.h"
+
+
+/* picoterm_cursor.c */
+extern bool is_blinking;
+
+/* picoterm_i2c.c */
+extern i2c_inst_t *i2c_bus;
+extern bool i2c_bus_available; // gp26 & gp27 are used as I2C (otherwise as simple GPIO)
 
 // This is 4 for the font we're using
 #define FRAGMENT_WORDS 4
 
 static bool is_menu = false;   // switch between Terminal mode and Menu mode
 static uint8_t id_menu = 0x00; // toggle with CTRL+SHIFT+M
+
 
 //CU_REGISTER_DEBUG_PINS(frame_gen)
 //CU_SELECT_DEBUG_PINS(frame_gen)
@@ -96,7 +111,7 @@ int vspeed = 1 * 1;
 int hspeed = 1 << COORD_SHIFT;
 int hpos;
 int vpos;
-bool is_blinking = false;
+
 
 static const int input_pin0 = 22;
 
@@ -120,6 +135,9 @@ extern picoterm_config_t config; // Issue #13, awesome contribution of Spock64
 
 extern const lv_font_t nupetscii_mono8; // Declare the available fonts
 extern const lv_font_t cp437_mono8;
+extern const lv_font_t nupetscii_olivetti_thin; // Declare the available fonts
+extern const lv_font_t cp437_olivetti_thin;
+
 const lv_font_t *font = &nupetscii_mono8;
 
 
@@ -134,7 +152,6 @@ static int x_sprites = 1;
 
 void init_render_state(int core);
 void led_blinking_task();
-void csr_blinking_task();
 void usb_power_task();
 void bell_task();
 
@@ -188,38 +205,44 @@ void setup_video() {
   volatile uint32_t scanline_color = 0;
 #endif
 
-uint8_t pad[65536];
-uint32_t *font_raw_pixels;
+uint8_t pad[65536]; // to check!!!
 
+#define FONT_MAX_HEIGHT 15
 #define FONT_WIDTH_WORDS FRAGMENT_WORDS
 #define FONT_HEIGHT (font->line_height) // Should be identical accross all fonts.
+#define FONT_MAX_SIZE_WORDS (FONT_MAX_HEIGHT * FONT_WIDTH_WORDS)
 #define FONT_SIZE_WORDS (FONT_HEIGHT * FONT_WIDTH_WORDS)
+
+uint32_t *font_raw_pixels = NULL;
 
 void select_graphic_font( uint8_t font_id ){
   /* Assign GRAPHICAL font (nupetscii, cp437) by reassigning the `font` pointer */
   if(font_id == FONT_ASCII) // ignore for ANSI
     return;
-  if(font_id == FONT_NUPETSCII){
+  if(font_id == FONT_NUPETSCII_MONO8){
     font = &nupetscii_mono8;
     return;
   }
-  if(font_id == FONT_CP437){
+  if(font_id == FONT_CP437_MONO8){
     font = &cp437_mono8;
     return;
   }
+	if(font_id == FONT_NUPETSCII_OLIVETTITHIN ){
+		font = &nupetscii_olivetti_thin;
+		return;
+	}
+	if(font_id == FONT_CP437_OLIVETTITHIN ){
+		font = &cp437_olivetti_thin;
+		return;
+	}
 }
 
 void build_font( uint8_t font_id ){
     /* Build/fill internal structure for drawing font with PIO */
     uint16_t colors[16];
-    // Free up previous font (Issue #14  , Thanks Spock64)
-    if(font_raw_pixels)
-      free(font_raw_pixels);
-
     // extended_font (NuPetScii) doesn't required inverted char
     // non extended_font (default font) just reduce the initial charset to 95 THEN compute the reverse value
     char max_char = font_id!=FONT_ASCII ? font->dsc->cmaps->range_length : 95;
-
     for (int i = 0; i < count_of(colors); i++) {
         colors[i] = PICO_SCANVIDEO_PIXEL_FROM_RGB5(1, 1, 1) * ((i * 3) / 2);
         if (i) i != 0x8000;
@@ -227,11 +250,14 @@ void build_font( uint8_t font_id ){
 
     // We know range_length is 95 in the orginal font and full charset (up to 255)for the extended font
     // 4 is bytes per word, range_length is #chrs in font, FONT_SIZE_WORDS is words in width * font height
-    font_raw_pixels = (uint32_t *) calloc(4, 256 * FONT_SIZE_WORDS * 2 );
+
+		if( font_raw_pixels == NULL )
+    	font_raw_pixels = (uint32_t *) calloc(4, 256 * FONT_MAX_SIZE_WORDS * 2 );
 
     uint32_t *p = font_raw_pixels;
     uint32_t *pr = font_raw_pixels+( max_char * FONT_SIZE_WORDS); // pr is the reversed characters, build those in the same loop as the regular ones
-    assert(font->line_height == FONT_HEIGHT);
+
+    assert(font->line_height <= FONT_MAX_HEIGHT);
 
     for (int c = 0; c < max_char; c++) {
         // *** inefficient but simple ***
@@ -379,8 +405,7 @@ static __not_in_flash("y") uint16_t end_of_line[] = {
         COMPOSABLE_RAW_1P, 0,
 #endif
 #if FRAGMENT_WORDS >= 4
-        COMPOSABLE_RAW_2P, 0,
-        0, COMPOSABLE_RAW_1P_SKIP_ALIGN,
+        COMPOSABLE_RAW_2P, 0, 0, COMPOSABLE_RAW_1P_SKIP_ALIGN,
         0, 0,
 #endif
         COMPOSABLE_EOL_SKIP_ALIGN, 0xffff // eye catcher
@@ -561,22 +586,15 @@ void usb_serial_task(){
 // MAIN
 //--------------------------------------------------------------------+
 
+
 int main(void) {
-  debug_init(); // GPIO 28 as rx @ 115200
+  debug_init(); // GPIO 22 as rx @ 115200
   debug_print( "main() - 80 column version" );
+
 
   gpio_init(LED);
   gpio_set_dir(LED, GPIO_OUT);
   gpio_put(LED,false);
-
-  gpio_init(USB_POWER_GPIO); // GPIO 26
-  gpio_set_dir(USB_POWER_GPIO, GPIO_OUT);
-  gpio_put(USB_POWER_GPIO,false);
-  start_time = board_millis();
-
-  gpio_init(BUZZER_GPIO);
-  gpio_set_dir(BUZZER_GPIO, GPIO_OUT);
-  gpio_put(BUZZER_GPIO,false);
 
   uint8_t bootchoice = 0;
   gpio_init(BTN_A);
@@ -634,8 +652,43 @@ int main(void) {
           break;
   }
 
-  // AFTER   reading and writing
+	// AFTER   reading and writing
   stdio_init_all();
+
+  // Checking GP26 & GP27 will be handled as GPIO or I2C bus (with PCA9536 see issue #21)
+  // Then initialize the IO for USB_POWER &
+  i2c_bus_available = false;
+  /*
+  debug_print( "Check I2C capability" );
+  init_i2c_bus(); // try to initialize the PicoTerm I2C bus
+  if( has_pca9536( i2c_bus ) ){
+    debug_print( "pca9536 detected!" );
+    i2c_bus_available = true;
+    pca9536_output_reset( i2c_bus, 0b0011 ); // preinitialize output at LOW
+    pca9536_setup_io( i2c_bus, IO_0, IO_MODE_OUT ); // USB_POWER
+    pca9536_setup_io( i2c_bus, IO_1, IO_MODE_OUT ); // BUZZER
+    pca9536_setup_io( i2c_bus, IO_2, IO_MODE_IN ); // not used yet
+    pca9536_setup_io( i2c_bus, IO_3, IO_MODE_IN ); // not used yet
+  }
+	// check other I2C GPIO expander here!
+*/
+  if( i2c_bus_available )
+    debug_print( "I2C bus detected" );
+
+  if( !i2c_bus_available ){
+    debug_print( "Using GPIO capability" );
+    deinit_i2c_bus();
+
+    gpio_init(USB_POWER_GPIO); // GPIO 26
+    gpio_set_dir(USB_POWER_GPIO, GPIO_OUT);
+    gpio_put(USB_POWER_GPIO,false);
+
+    gpio_init(BUZZER_GPIO);
+    gpio_set_dir(BUZZER_GPIO, GPIO_OUT);
+    gpio_put(BUZZER_GPIO,false);
+  }
+
+  start_time = board_millis();
 
   uart_init(UART_ID, config.baudrate); // UART 1
   uart_set_hw_flow(UART_ID,false,false);
@@ -662,6 +715,9 @@ int main(void) {
   // Initialise keyboard module
   keybd_init( pico_key_down, pico_key_up );
   terminal_init();
+	cli_init();
+	spi_sd_init(); // Initialize pio_FatFS over PIO_SPI
+	sd_mount(); // perform a mount test at boot
 
   video_main();       // also build the font
   terminal_reset();
@@ -677,12 +733,13 @@ int main(void) {
     usb_power_task();
     led_blinking_task();
     csr_blinking_task();
+    key_repeat_task();
     bell_task();
 
-    if( is_menu && !(old_menu) ){ // CRL+M : menu activated ?
-      // empty the keyboard buffer
-      while( key_ready() )
-        read_key_from_buffer();
+    if( is_menu && !(old_menu) ){ // menu activated ?
+      copy_main_to_secondary_screen(); // copy terminal screen
+      save_cursor_position();
+      clear_key_buffer(); // empty the keyboard buffer
       switch( id_menu ){
         case MENU_CONFIG:
           display_config();
@@ -693,11 +750,18 @@ int main(void) {
         case MENU_HELP:
           display_help();
           break;
+				case MENU_COMMAND:
+					display_command();
+					break;
       };
       old_menu = is_menu;
     }
-    else if( !(is_menu) && old_menu ){ // CRL+M : menu de-activated ?
-      display_terminal();
+    else if( !(is_menu) && old_menu ){ // menu de-activated ?
+      //display_terminal();
+      clrscr();
+      copy_secondary_to_main_screen(); // restore terminal screen
+      restore_cursor_position();
+      clear_key_buffer(); // empty the keyboard buffer
       old_menu = is_menu;
     }
 
@@ -707,9 +771,13 @@ int main(void) {
           // Specialized handler manage keyboard input for menu
           _ch = handle_config_input();
           break;
+				case MENU_COMMAND:
+					// Specialized handler managing keyboard input for command
+					_ch = handle_command_input();
+					break;
         default:
           _ch = handle_default_input();
-      }
+      } // eof Switch
       if( _ch==ESC ){ // ESC will also close the menu
           is_menu = false;
           id_menu = 0x00;
@@ -722,10 +790,10 @@ int main(void) {
 }
 
 //--------------------------------------------------------------------+
-// Blinking Task
+//  Tasks
 //--------------------------------------------------------------------+
 bool led_state = false;
-bool usb_power_state = false; // GPIO 5
+bool usb_power_state = false;
 
 void led_blinking_task() {
   const uint32_t interval_ms_led = 1000;
@@ -750,25 +818,17 @@ void led_blinking_task() {
 void usb_power_task() {
   if( !usb_power_state && ((board_millis() - start_time)>USB_POWER_DELAY )){
     usb_power_state = true;
-    gpio_put( USB_POWER_GPIO, true );
+    if( i2c_bus_available ){
+      // USB_POWER wired on the IO_0 of PCA9536
+      pca9536_output_io( i2c_bus, IO_0, true );
+    }
+    else
+      // USB_POWER wired directly on the GPIO
+      gpio_put( USB_POWER_GPIO, true );
   }
 }
 
-void csr_blinking_task() {
-  const uint32_t interval_ms_csr = 525;
-  static uint32_t start_ms_csr = 0;
 
-  // Blink every interval ms
-  if ( board_millis() - start_ms_csr > interval_ms_csr) {
-
-  start_ms_csr += interval_ms_csr;
-
-  is_blinking = !is_blinking;
-  set_cursor_blink_state( 1 - cursor_blink_state() );
-
-  refresh_cursor();
-  }
-}
 
 void bell_task() {
   const uint32_t interval_ms_bell = 100;
@@ -776,12 +836,18 @@ void bell_task() {
 
   if(get_bell_state() == 1){
     start_ms_bell = board_millis();
-    gpio_put(BUZZER_GPIO, true);
+    if(i2c_bus_available) // BuZZER wired on the IO_1 of PCA9536
+      pca9536_output_io( i2c_bus, IO_1, true );
+    else
+      gpio_put(BUZZER_GPIO, true); // buzzer Wired directly on GPIO
     set_bell_state(2);
   }
 
   else if (get_bell_state() == 2 && board_millis() - start_ms_bell > interval_ms_bell) {
-    gpio_put(BUZZER_GPIO, false);
+    if(i2c_bus_available)
+      pca9536_output_io( i2c_bus, IO_1, false ); // BuZZER wired on the IO_1 of PCA9536
+    else
+      gpio_put(BUZZER_GPIO, false); // buzzer Wired directly on GPIO
     set_bell_state(0);
   }
 
@@ -795,6 +861,16 @@ static void pico_key_down(int scancode, int keysym, int modifiers) {
     //printf("Key down, %i, %i, %i \r\n", scancode, keysym, modifiers);
 
   if( scancode_is_mod(scancode)==false ){
+			// hotkey - Shortcut
+			if( (scancode>=SCANCODE_F1) && (scancode<=SCANCODE_F12) && ((modifiers&WITH_SHIFT)==WITH_SHIFT) ){
+				debug_print("Hotkey captured!");
+				int f_key = (scancode-SCANCODE_F1)+1;
+				char fname[20];
+				sprintf( fname, "hotkey/f%d-%s.dat", f_key, ((modifiers|WITH_SHIFT)==WITH_SHIFT) ? "s" : "sc"  );
+				send_file_to_uart( fname );
+				return; // do not add key to "Keyboard buffer"
+			}
+
       // which char at that key?
       uint8_t ch = keycode2ascii[scancode][0];
       // Is there a modifier key under use while pressing the key?
@@ -814,12 +890,20 @@ static void pico_key_down(int scancode, int keysym, int modifiers) {
         is_menu = !(is_menu);
         return; // do not add key to "Keyboard buffer"
       }
+
       if( (ch=='l') && (modifiers == (WITH_CTRL + WITH_SHIFT)) ){
         // toggle between graphical font and ANSI font
         config.font_id = (config.font_id == 0 ? config.graph_id : 0);
         build_font( config.font_id );
         return; // do not add key to "Keyboard buffer"
       }
+
+			if( (ch=='c') && (modifiers == (WITH_CTRL + WITH_SHIFT)) ){
+        id_menu = MENU_COMMAND;
+        is_menu = !(is_menu);
+        return; // do not add key to "Keyboard buffer"
+      }
+
       if( modifiers & WITH_SHIFT ){
           ch = keycode2ascii[scancode][1];
       }
@@ -847,5 +931,12 @@ static void pico_key_down(int scancode, int keysym, int modifiers) {
 }
 
 static void pico_key_up(int scancode, int keysym, int modifiers) {
+
+	  char fstr[200];
+		sprintf( fstr, "Key up, %i, %i, %i \r\n", scancode, keysym, modifiers);
+				
+    debug_print( fstr);
+
+
    printf("Key up, %i, %i, %i \r\n", scancode, keysym, modifiers);
 }

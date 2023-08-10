@@ -29,7 +29,6 @@
 #include "pico/multicore.h"
 #include "pico/sync.h"
 #include "font.h" // Looks in under comment for 40 columns version
-#include "hardware/uart.h"
 #include "hardware/irq.h"
 #include <stdint.h>
 
@@ -43,19 +42,11 @@
 #define _MAIN_H
 
 
-#define LED             25
-#define UART_ID         uart1   // also see hid_app.c
-#define UART_TX_PIN     20
-#define UART_RX_PIN     21
-
 #define MENU_CONFIG    0x01 // support several menu
 #define MENU_CHARSET   0x02 // display current charset
 #define MENU_HELP      0x03 // display the HELP menu
+#define MENU_COMMAND   0x04 // Key-in interpreter command
 
-#define USB_POWER_GPIO 26 // this GPIO can be used with a MOSFET to power-up USB
-#define USB_POWER_DELAY 5000 // ms
-
-#define BUZZER_GPIO 27 // active buzzer
 
 static uint32_t start_time;
 
@@ -69,4 +60,44 @@ void build_font( uint8_t font_id );
 void render_on_core1();
 void stop_core1();
 
+
+
+/*
+#define c_Black	0, 0, 0
+#define c_Red	170, 0, 0
+#define c_Green	0, 170, 0
+#define c_Yellow	170, 85, 0
+#define c_Blue	0, 0, 170
+#define c_Magenta	170, 0, 170
+#define c_Cyan	0, 170, 170
+#define c_White	170, 170, 170
+#define c_BrightBlack	85, 85, 85
+#define c_BrightRed	255, 85, 85
+#define c_BrightGreen	85, 255, 85
+#define c_BrightYellow	255, 255, 85
+#define c_BrightBlue	85, 85, 255
+#define c_BrightMagenta	255, 85, 255
+#define c_BrightCyan	85, 255, 255
+#define c_BrightWhite	255, 255, 255
+*/
+
+#define	c_Black	(((0)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((0)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((0)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_Red	(((0)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((0)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((170)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_Green	(((0)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((170)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((0)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_Yellow	(((0)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((85)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((170)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_Blue	(((170)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((0)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((0)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_Magenta	(((170)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((0)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((170)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_Cyan	(((170)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((170)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((0)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_White	(((170)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((170)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((170)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_BrightBlack	(((85)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((85)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((85)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_BrightRed	(((85)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((85)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((255)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_BrightGreen	(((85)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((255)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((85)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_BrightYellow	(((85)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((255)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((255)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_BrightBlue	(((255)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((85)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((85)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_BrightMagenta	(((255)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((85)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((255)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_BrightCyan	(((255)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((255)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((85)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+#define	c_BrightWhite	(((255)<<PICO_SCANVIDEO_PIXEL_BSHIFT)|((255)<<PICO_SCANVIDEO_PIXEL_GSHIFT)|((255)<<PICO_SCANVIDEO_PIXEL_RSHIFT))
+
 #endif // _MAIN_H
+
+

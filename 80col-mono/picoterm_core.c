@@ -19,6 +19,8 @@
 
 
 #include "picoterm_core.h"
+#include "main.h" // Build font
+#include "hardware/uart.h"
 #include "../common/pmhid.h" // keyboard definitions
 #include "../common/picoterm_config.h"
 #include "../common/picoterm_dec.h" // DEC lines
@@ -26,7 +28,7 @@
 #include "picoterm_screen.h" // display_x screen function
 #include "picoterm_conio.h" // basic input/output function for console
 //#include "tusb_option.h"
-#include "main.h" // UART_ID
+#include "../common/picoterm_harddef.h" // UART_ID
 #include "../common/picoterm_debug.h"
 
 
@@ -57,9 +59,6 @@ extern picoterm_config_t config; // Issue #13, awesome contribution of Spock64
 
 /* picoterm_conio.c */
 extern picoterm_conio_config_t conio_config;
-
-// saved cursor
-struct point saved_csr = {0,0};
 
 char bell_state = 0;
 bool insert_mode = false;
@@ -101,8 +100,7 @@ void reset_escape_sequence(){
 
 void terminal_reset(){
     move_cursor_home();
-    saved_csr.x = 0;
-    saved_csr.y = 0;
+    reset_saved_cursor();
 
     mode = VT100;
     insert_mode = false;
@@ -254,13 +252,11 @@ void esc_sequence_received(){
                   }
                   else if(esc_parameters[0]==1048){
                       //save cursor
-                      saved_csr.x = conio_config.cursor.pos.x;
-                      saved_csr.y = conio_config.cursor.pos.y;
+                      save_cursor_position();
                   }
                   else if(esc_parameters[0]==1049){
                       //save cursor and save screen
-                      saved_csr.x = conio_config.cursor.pos.x;
-                      saved_csr.y = conio_config.cursor.pos.y;
+                      save_cursor_position();
                       copy_main_to_secondary_screen();
                   }
               }
@@ -327,8 +323,9 @@ void esc_sequence_received(){
                   else if(esc_parameters[0]==1049){
                       //restore screen and restore cursor
                       copy_secondary_to_main_screen();
-                      conio_config.cursor.pos.x = saved_csr.x;
-                      conio_config.cursor.pos.y = saved_csr.y;
+                      restore_cursor_position();
+                      //conio_config.cursor.pos.x = saved_csr.x;
+                      //conio_config.cursor.pos.y = saved_csr.y;
                   }
               }
               else{
@@ -382,14 +379,16 @@ void esc_sequence_received(){
 
           case 's':
               // save cursor position
-              saved_csr.x = conio_config.cursor.pos.x;
-              saved_csr.y = conio_config.cursor.pos.y;
+              save_cursor_position();
+              //saved_csr.x = conio_config.cursor.pos.x;
+              //saved_csr.y = conio_config.cursor.pos.y;
               break;
 
           case 'u':
               // move to saved cursor position
-              conio_config.cursor.pos.x = saved_csr.x;
-              conio_config.cursor.pos.y = saved_csr.y;
+              restore_cursor_position();
+              //conio_config.cursor.pos.x = saved_csr.x;
+              //conio_config.cursor.pos.y = saved_csr.y;
               break;
 
           case 'J':
@@ -574,6 +573,7 @@ void esc_sequence_received(){
 }
 
 void handle_new_character(unsigned char asc){
+	// Ask Terminal core to handle this new character
   if(esc_state != ESC_READY){
       // === ESC SEQUENCE ====================================================
       switch(esc_state){
@@ -625,14 +625,12 @@ void handle_new_character(unsigned char asc){
 
                 if (asc=='7' ){
                     // save cursor position
-                    saved_csr.x = conio_config.cursor.pos.x;
-                    saved_csr.y = conio_config.cursor.pos.y;
+                    save_cursor_position();
                     reset_escape_sequence();
                 }
                 else if (asc=='8' ){
                     // move to saved cursor position
-                    conio_config.cursor.pos.x = saved_csr.x;
-                    conio_config.cursor.pos.y = saved_csr.y;
+                    restore_cursor_position();
                     reset_escape_sequence();
                 }
                 else if (asc=='D' ){
@@ -756,7 +754,7 @@ void handle_new_character(unsigned char asc){
           if(insert_mode) insert_chars(1);
 
           // --- Strict ASCII <0x7f or Extended NuPetSCII <= 0xFF ---
-          slip_character(asc-32,conio_config.cursor.pos.x,conio_config.cursor.pos.y);
+          put_char(asc-32,conio_config.cursor.pos.x,conio_config.cursor.pos.y);
           conio_config.cursor.pos.x++;
 
           if(!conio_config.wrap_text){

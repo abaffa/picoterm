@@ -82,6 +82,15 @@ class SerialHelper:
 		ser.write_str( "Run: %s\r\n" % test_name )
 		eval( 'test_%s(ser)' % test_name )
 
+	def list_test( self, partial_name ):
+		""" enumerate the test having the partial name in it + display its name and help """
+		print( "List tests for: %s" % partial_name )
+		_list = get_test_names()
+		for _name in _list:
+			if partial_name in _name:
+				print( "--- %s --------------------------------" % _name )
+				print( get_docstring( _name ))
+		print( ' ' )
 
 def get_test_names():
 	""" List the available test names in the script """
@@ -255,6 +264,38 @@ def test_char_insert( ser ):
 	ser.write_str("\ESC[2;3H") # Line 2, Col 3
 	ser.write_str("\ESC[8@") # Line 2, Col 3
 
+def test_40col_char_insert( ser ):
+	""" Send Lorem Ipsum, go first line at third character, insert 8 spaces """
+	test_clear(ser)
+	test_lorem(ser)
+	ser.write_str("\ESC[1;3H") # Line 2, Col 3
+	time.sleep(3)
+	ser.write_str("\ESC[8@") # Line 2, Col 3
+
+def test_line_insert( ser ):
+	""" Send Lorem Ipsum, go second line at third character, insert 1 line """
+	test_clear(ser)
+	test_lorem(ser)
+	ser.write_str("\ESC[2;3H") # Line 2, Col 3
+	time.sleep(3)
+	ser.write_str("\ESC[1L") # Insert 1 Line
+
+def test_line_delete( ser ):
+	""" Send Lorem Ipsum, go second line at third character, delete 1 line """
+	test_clear(ser)
+	test_lorem(ser)
+	ser.write_str("\ESC[2;3H") # Line 2, Col 3
+	time.sleep(3)
+	ser.write_str("\ESC[1M") # Delete 1 Line
+
+def test_line_delete3( ser ):
+	""" Send Lorem Ipsum, go second line at third character, delete 3 lines """
+	test_clear(ser)
+	test_lorem(ser)
+	ser.write_str("\ESC[2;3H") # Line 2, Col 3
+	time.sleep(3)
+	ser.write_str("\ESC[3M") # Delete 3 Lines
+
 def test_blink( ser ):
 	""" Display text with blinking parts and no blinking parts  """
 	ser.write_str("This text should NOT BLINK!\r\n")
@@ -341,12 +382,30 @@ def test_clear_line( ser ):
 	ser.write_str("\ESC[2K") # clear the while line
 
 def test_char_delete( ser ):
-	""" Send Lorem Ipsum, set cursor to 5th line & 50th char, delete 10 chars.
+	""" Send Lorem Ipsum, set cursor to 5th line & 20th char, delete 10 chars.
 	The end-of-line should shift left of 10 chars from cursor (cursor position included)."""
 	test_clear(ser)
 	test_lorem(ser)
-	ser.write_str("\ESC[5;50H") # Line 5, Col 5
+	ser.write_str("\ESC[5;20H") # Line 5, Col 20
 	ser.write_str("\ESC[10P") # delete 10 characters
+
+def test_40col_char_delete( ser ):
+	""" Send Lorem Ipsum, set cursor to 3th line & 20th char, delete 10 chars.
+	The end-of-line should shift left of 10 chars from cursor (cursor position included)."""
+	test_clear(ser)
+	test_lorem(ser)
+	ser.write_str("\ESC[3;20H") # Line 3, Col 20
+	time.sleep(3)
+	ser.write_str("\ESC[10P") # delete 10 characters
+
+def test_40col_char_erase( ser ):
+	""" Send Lorem Ipsum, set cursor to 3th line & 20th char, Erase 10 chars.
+	The char under the cursor and next 9 chars should be blank (10 chars cursor position included)."""
+	test_clear(ser)
+	test_lorem(ser)
+	ser.write_str("\ESC[3;20H") # Line 3, Col 20
+	time.sleep(3)
+	ser.write_str("\ESC[10X") # erase 10 characters
 
 def test_char_delete80( ser ):
 	""" Send Lorem Ipsum, set cursor to 5th line & 80th char, delete 10 chars.
@@ -712,6 +771,8 @@ if __name__ == '__main__':
 	print( '== PicoTerm Escape Sequence tester %s ==' % __version__ )
 	print( 'Series of test to call on demand to check specific escape ')
 	print( 'sequence handling on PicoTerm.')
+	print( '' )
+
 
 	if (len( sys.argv )==1) or ('-h' in sys.argv):
 		show_help()
@@ -723,14 +784,33 @@ if __name__ == '__main__':
 
 	# List of tests
 	_names = get_test_names()
-	print( "type test name to execute it or exit to quit!")
+	print( '* Key-in "test_name" to execute it.' )
+	print( '* Key-in "PARTIAL_test_name" will display name containing the string' )
+	print( '* Key-in "?PARTTIAL test_name" will display name and HELP' )
+	print( '* Key-in "." executes the last test_name again.')
+	print( '-'*79 )
 	print( "test names: %s" % ", ".join(_names) )
+	print( '-'*79 )
+	print( ' ' )
 	_cmd = 'none'
+	_last_cmd = 'none'
 	while _cmd != 'exit':
 		_cmd = input("Which test? ")
 		if _cmd in _names:
 			ser.run_test( _cmd )
+			_last_cmd = _cmd
 			print('') # add a spacer
+		elif len(_cmd)==0:
+			pass
+		elif _cmd=="exit":
+			pass
+		elif _cmd==".":
+			if _last_cmd in _names:
+				ser.run_test( _last_cmd )
+		elif _cmd[0] == '?':
+			ser.list_test( _cmd[1:] )
 		else:
-			print("Unknown command %s" % _cmd )
+			print("UNKNOWN COMMAND %s !" % _cmd )
+			if len(_cmd)>0:
+				print( "'%s' could match: %s" % (_cmd,", ".join( [_name for _name in _names if _cmd.upper() in _name.upper()])) )
 	print( "That's all folks!" )
