@@ -220,8 +220,6 @@ static void process_generic_report(uint8_t dev_addr, uint8_t instance, uint8_t c
 // Note: if report descriptor length > CFG_TUH_ENUMERATION_BUFSIZE, it will be skipped
 // therefore report_desc = NULL, desc_len = 0
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len) {
-    
-    
     sprintf( debug_msg, "HID device address = %d, instance = %d is mounted", dev_addr, instance );
     debug_print( debug_msg );
 
@@ -231,7 +229,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
     sprintf( debug_msg, "HID Interface Protocol = %s", protocol_str[itf_protocol] );
     debug_print( debug_msg );
 
-    if( itf_protocol == 1 ) // Did we attached a keyboard?
+    if( itf_protocol == 1 )  // Did we attached a keyboard? Only pump report for keyboards
       keybd_dev_addr = dev_addr;
     else
         return;
@@ -425,6 +423,25 @@ bool scancode_is_mod(int scancode) {
     return false;
 }
 
+signed char scancode_has_esc_seq(int scancode){
+    // Some ScanCode are converted to specific esccape sequence
+    // (like Key right, Key Left, etc).
+    // Return the index in the structure (or -1)
+    for( int i=0; i<PM_ESC_SEQ_COUNT; i++ )
+      if( keycode2escseq[i][0]==scancode )
+        return i;
+    return -1;
+}
+
+int scancode_esc_seq_len(uint8_t index){
+    // len of chars in the Escape Sequence
+    return keycode2escseq[index][1];
+}
+
+char scancode_esc_seq_item(uint8_t index, uint8_t pos ) {
+    // One of the char of the escape sequence
+    return keycode2escseq[index][2+pos];
+}
 
 
 static void default_key_down(int scancode, int keysym, int modifiers) {
